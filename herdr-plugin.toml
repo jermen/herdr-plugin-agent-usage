@@ -14,6 +14,11 @@ title = "Start usage collector"
 command = ["python3", "usage.py", "start"]
 
 [[actions]]
+id = "configure"
+title = "Configure Claude statusLine wrapper and start"
+command = ["python3", "install.py", "--no-link"]
+
+[[actions]]
 id = "collect"
 title = "Collect usage now"
 command = ["python3", "usage.py", "collect"]

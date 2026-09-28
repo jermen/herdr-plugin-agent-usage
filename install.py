@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Link this local plugin and configure a reversible Claude metrics wrapper."""
+"""Configure a reversible Claude metrics wrapper and start the collector.
+
+Without --no-link it also links this checkout as a local plugin (development)."""
 import argparse
 import json
 import os
@@ -22,6 +24,12 @@ def configure_claude(settings_path, config_dir, state_dir, config_file):
     if isinstance(original, dict) and "claude_statusline.py" in original.get("command", ""):
         if original.get("command") == command and wrapper.exists():
             return "already configured"
+        if wrapper.exists() and shlex.split(original["command"])[-1:] == [str(wrapper)]:
+            # Same wrapper state from another checkout, e.g. after switching between
+            # a linked development checkout and `herdr plugin install`.
+            settings["statusLine"] = {**original, "command": command}
+            atomic_json(settings_path, settings)
+            return "moved to this checkout"
         raise ValueError("a different usage wrapper is already configured")
     if original is not None and (not isinstance(original, dict) or original.get("type") != "command"):
         raise ValueError("unsupported existing statusLine")
@@ -47,6 +55,8 @@ def main():
                         help="configure the Claude metrics wrapper (default: enabled); "
                              "--no-claude-statusline leaves Claude settings unchanged")
     parser.add_argument("--timezone", default="Europe/Prague")
+    parser.add_argument("--no-link", action="store_true",
+                        help="do not link this checkout; for plugins installed with `herdr plugin install`")
     args = parser.parse_args()
     from zoneinfo import ZoneInfo
     ZoneInfo(args.timezone)
@@ -63,8 +73,10 @@ def main():
     if args.claude_statusline:
         settings_path = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "settings.json"
         print(configure_claude(settings_path, config_dir, state_dir, config_file))
-    subprocess.run(["herdr", "plugin", "link", str(ROOT), "--enabled"], check=True)
-    subprocess.run(["herdr", "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"], check=True)
+    herdr = os.environ.get("HERDR_BIN_PATH") or "herdr"
+    if not args.no_link:
+        subprocess.run([herdr, "plugin", "link", str(ROOT), "--enabled"], check=True)
+    subprocess.run([herdr, "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"], check=True)
 
 
 if __name__ == "__main__":
