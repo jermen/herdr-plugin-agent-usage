@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -190,6 +191,35 @@ class IntegrationTests(unittest.TestCase):
                                 input=payload, capture_output=True, env=env, timeout=5)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, payload)
+
+    def test_claude_wrapper_moves_with_the_checkout(self):
+        settings = self.root / "settings.json"
+        settings.write_text(json.dumps({"statusLine": {"type": "command", "command": "cat", "padding": 2}}))
+        config_dir = self.root / "config"
+        state_dir = self.root / "state"
+        with patch("install.ROOT", Path("/old checkout")):
+            configure_claude(settings, config_dir, state_dir, config_dir / "config.json")
+        wrapper_state = (config_dir / "claude-statusline.json").read_text()
+        self.assertEqual(configure_claude(settings, config_dir, state_dir, config_dir / "config.json"), "moved to this checkout")
+        status_line = json.loads(settings.read_text())["statusLine"]
+        self.assertEqual(shlex.split(status_line["command"])[1], str(ROOT / "claude_statusline.py"))
+        self.assertEqual(status_line["padding"], 2)
+        self.assertEqual((config_dir / "claude-statusline.json").read_text(), wrapper_state)
+        self.assertEqual(len(list(self.root.glob("*.bak"))), 1)
+        self.assertEqual(configure_claude(settings, config_dir, state_dir, config_dir / "config.json"), "already configured")
+        with patch("install.ROOT", Path("/elsewhere")), patch("install.sys.executable", "/other/python"):
+            (config_dir / "claude-statusline.json").rename(config_dir / "moved.json")
+            with self.assertRaises(ValueError):
+                configure_claude(settings, config_dir, state_dir, config_dir / "config.json")
+
+    def test_no_link_skips_linking_but_starts_the_collector(self):
+        with patch("install.Path.home", return_value=self.root), patch.dict(os.environ, {
+                "XDG_STATE_HOME": str(self.root / "state"), "HERDR_BIN_PATH": "/bin/herdr"}), \
+                patch("sys.argv", ["install.py", "--no-link", "--no-claude-statusline"]), \
+                patch("install.subprocess.run") as run, patch("sys.stdout", new_callable=io.StringIO):
+            install_main()
+        self.assertEqual([call.args[0] for call in run.call_args_list],
+                         [["/bin/herdr", "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"]])
 
     def test_kimi_quota_units_and_credentials_not_persisted(self):
         payload = {"usage": {"limit": "100", "remaining": "25"}, "limits": [

@@ -1,19 +1,28 @@
 # Herdr Agent Usage
 
-Data collection for [DMDOX-315](https://dmdox.atlassian.net/browse/DMDOX-315).
+Session usage, quota, context and spending data for other Herdr plugins.
 An original Python standard-library plugin with no UI, model calls or dependency
 on another Herdr plugin. Requires Python 3.11+ and Herdr 0.9.1 on Linux or macOS.
 
 ## Install
 
-Keep the checkout at a stable location, then run from it:
-
 ```sh
-python3 install.py --timezone Europe/Prague
+herdr plugin install jermen/herdr-plugin-agent-usage --yes
+herdr plugin action invoke configure --plugin jermen.agent-usage
 ```
 
-This links/enables `jermen.agent-usage`, starts its watcher, and automatically
-wraps the existing Claude statusLine command. Its output and settings are preserved,
+`configure` runs `install.py --no-link` inside the installed checkout: it starts
+the watcher and automatically wraps the existing Claude statusLine command.
+Herdr starts the watcher by itself on later server starts. Reinstalling with
+`herdr plugin install` updates the checkout in place.
+
+For development, or to pass options such as `--timezone`, run the installer from
+a clone instead: `herdr plugin uninstall jermen.agent-usage`, then
+`python3 install.py --timezone Europe/Prague` links that clone as a local plugin.
+The Claude wrapper moves to whichever checkout ran the installer last, keeping
+its state; after going back to the installed plugin, run `configure` again.
+
+The wrapper preserves the original command's output and settings,
 with a full settings backup before the change. Re-running the installer keeps the
 same wrapper and original command without adding another wrapper or backup.
 `CLAUDE_CONFIG_DIR` selects a custom Claude profile; otherwise the installer uses
@@ -227,7 +236,7 @@ herdr plugin action invoke collect --plugin jermen.agent-usage
 python3 usage.py snapshot
 ```
 
-Disable/unlink jermen.agent-usage and terminate this checkout's `usage.py watch`
+Uninstall (or unlink) jermen.agent-usage and terminate its `usage.py watch`
 process to stop collection: Herdr startup commands are not supervised. Restore
 only the prior statusLine object from claude-statusline.json's original field
 (or remove it if originally absent), preserving other settings changed since

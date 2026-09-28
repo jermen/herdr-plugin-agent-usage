@@ -1,0 +1,19 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 -B -m unittest discover -s tests -v
+      - run: >-
+          python3 -c 'import tomllib; tomllib.load(open("herdr-plugin.toml", "rb"))'
+      - run: python3 -m compileall -q agent_usage usage.py install.py claude_statusline.py
