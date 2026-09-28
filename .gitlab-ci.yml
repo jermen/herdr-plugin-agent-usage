@@ -1,0 +1,7 @@
+image: python:3.12-slim
+
+test:
+  script:
+    - python3 -B -m unittest discover -s tests -v
+    - python3 -c 'import tomllib; tomllib.load(open("herdr-plugin.toml", "rb"))'
+    - python3 -m compileall -q agent_usage usage.py install.py claude_statusline.py

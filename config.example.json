@@ -1,0 +1,11 @@
+{
+  "timezone": "Europe/Prague",
+  "poll_seconds": 30,
+  "pricing": {
+    "service_tiers": {"codex": "standard"},
+    "default_models": {},
+    "aliases": {},
+    "multipliers": {},
+    "models": {}
+  }
+}

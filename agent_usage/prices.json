@@ -1,0 +1,72 @@
+{
+  "verified_at": "2026-09-21",
+  "unit": "USD per million tokens",
+  "sources": {
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "openai_long_context": "https://developers.openai.com/api/docs/models/gpt-6-astra.md",
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "kimi": "https://platform.kimi.ai/docs/pricing/chat.md"
+  },
+  "models": {
+    "gpt-6-astra": {
+      "long_context_threshold": 272000,
+      "tiers": {
+        "standard": {"input": "10", "cache_read": "1", "cache_write": "12.5", "output": "50"},
+        "priority": {"input": "20", "cache_read": "2", "cache_write": "25", "output": "100"},
+        "fast": {"input": "20", "cache_read": "2", "cache_write": "25", "output": "100"},
+        "flex": {"input": "5", "cache_read": "0.5", "cache_write": "6.25", "output": "25"}
+      }
+    },
+    "gpt-5.6-sol": {"long_context_threshold": 272000, "tiers": {
+      "standard": {"input": "4", "cache_read": "0.4", "cache_write": "5", "output": "20"},
+      "priority": {"input": "8", "cache_read": "0.8", "cache_write": "10", "output": "40"}
+    }},
+    "gpt-5.6-terra": {"long_context_threshold": 272000, "tiers": {
+      "standard": {"input": "2", "cache_read": "0.2", "cache_write": "2.5", "output": "12"},
+      "priority": {"input": "4", "cache_read": "0.4", "cache_write": "5", "output": "24"}
+    }},
+    "gpt-5.6-luna": {"long_context_threshold": 272000, "tiers": {
+      "standard": {"input": "0.2", "cache_read": "0.02", "cache_write": "0.25", "output": "1.2"},
+      "priority": {"input": "0.4", "cache_read": "0.04", "cache_write": "0.5", "output": "2.4"}
+    }},
+    "gpt-5.5": {"long_context_threshold": 272000, "tiers": {
+      "standard": {"input": "5", "cache_read": "0.5", "output": "30"}
+    }},
+    "gpt-5.4": {"long_context_threshold": 272000, "tiers": {
+      "standard": {"input": "2.5", "cache_read": "0.25", "output": "15"}
+    }},
+    "claude-fable-5-1": {"tiers": {"standard": {
+      "input": "10", "cache_read": "0.25", "cache_write": "12.5", "cache_write_1h": "20", "output": "50"
+    }}},
+    "claude-fable-5": {"tiers": {"standard": {
+      "input": "10", "cache_read": "1", "cache_write": "12.5", "cache_write_1h": "20", "output": "50"
+    }}},
+    "claude-opus-5": {"fast_multiplier": "2", "tiers": {"standard": {
+      "input": "5", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10", "output": "25"
+    }}},
+    "claude-opus-4-8": {"fast_multiplier": "2", "tiers": {"standard": {
+      "input": "5", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10", "output": "25"
+    }}},
+    "claude-opus-4-7": {"tiers": {"standard": {
+      "input": "5", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10", "output": "25"
+    }}},
+    "claude-opus-4-6": {"tiers": {"standard": {
+      "input": "5", "cache_read": "0.5", "cache_write": "6.25", "cache_write_1h": "10", "output": "25"
+    }}},
+    "kimi-k3": {"tiers": {"standard": {
+      "input": "3", "cache_read": "0.3", "cache_write": "3", "cache_write_1h": "6", "output": "15"
+    }}},
+    "kimi-k2.7-code": {"tiers": {"standard": {
+      "input": "0.95", "cache_read": "0.19", "output": "4"
+    }}},
+    "kimi-k2.7-code-highspeed": {"tiers": {"standard": {
+      "input": "1.9", "cache_read": "0.38", "output": "8"
+    }}},
+    "kimi-k2.6": {"tiers": {"standard": {
+      "input": "0.95", "cache_read": "0.16", "output": "4"
+    }}},
+    "claude-sonnet-5": {"tiers": {"standard": {
+      "input": "2", "cache_read": "0.2", "cache_write": "2.5", "cache_write_1h": "4", "output": "10"
+    }}}
+  }
+}

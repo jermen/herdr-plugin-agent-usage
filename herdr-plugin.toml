@@ -1,0 +1,27 @@
+id = "jermen.agent-usage"
+name = "Agent Usage"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Collect session usage, quota history, status and spending for other plugins."
+platforms = ["linux", "macos"]
+
+[[startup]]
+command = ["python3", "usage.py", "start"]
+
+[[actions]]
+id = "start"
+title = "Start usage collector"
+command = ["python3", "usage.py", "start"]
+
+[[actions]]
+id = "collect"
+title = "Collect usage now"
+command = ["python3", "usage.py", "collect"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["python3", "usage.py", "start"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "usage.py", "start"]
