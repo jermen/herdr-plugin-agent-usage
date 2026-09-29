@@ -34,6 +34,14 @@ class PricingTests(unittest.TestCase):
         self.assertEqual(Decimal(v["amount"]), Decimal("0.07725"))
         self.assertEqual(v["coverage"], "complete")
 
+    def test_opus_5_5_cache_read_and_fast_rates(self):
+        tokens = counts(input=1000, cache_read=1000, cache_write=1000, cache_write_1h=600, output=1000)
+        # 4 input, 0.2 cache read, 5/8 cache writes, 20 output per million.
+        self.assertEqual(Decimal(estimate([self.event("claude-opus-5-5", tokens)], "claude", {})["amount"]),
+                         Decimal("0.031"))
+        fast = self.event("claude-opus-5-5", tokens, speed="fast")
+        self.assertEqual(Decimal(estimate([fast], "claude", {})["amount"]), Decimal("0.062"))
+
     def test_astra_long_context_and_priority(self):
         e = self.event("gpt-6-astra", counts(input=200000, cache_read=100000, output=1000),
                        request_input=300000, service_tier="priority")
