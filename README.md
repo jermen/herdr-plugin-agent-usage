@@ -149,7 +149,7 @@ counts. A period without records has no measured usage; check collection_status
 before presenting it as zero consumption.
 
 The [catalog](agent_usage/prices.json) was verified against official sources on
-2026-09-21. It covers the locally used Claude/Codex models and current Kimi API
+2026-09-30. It covers the locally used Claude/Codex models and current Kimi API
 models. Prices are not scraped at runtime. Historical usage is valued using the
 current configured catalog, not claimed to reproduce historical invoices.
 Update the catalog or override exact models through pricing.models.
