@@ -42,6 +42,15 @@ class PricingTests(unittest.TestCase):
         fast = self.event("claude-opus-5-5", tokens, speed="fast")
         self.assertEqual(Decimal(estimate([fast], "claude", {})["amount"]), Decimal("0.062"))
 
+    def test_gpt_6_1_sol_cache_rate_and_renamed_priority_tier(self):
+        tokens = counts(input=1000000, cache_read=1000000, cache_write=1000000, output=1000000)
+        # 2 input, 0.1 cache read (5% of input), 2.5 cache write, 10 output per million.
+        standard = self.event("gpt-6.1-sol", tokens, request_input=1000)
+        self.assertEqual(Decimal(estimate([standard], "codex", {})["amount"]), Decimal("14.6"))
+        # Codex still logs "priority", which OpenAI renamed to Fast mode (2x).
+        priority = self.event("gpt-6.1-sol", tokens, request_input=1000, service_tier="priority")
+        self.assertEqual(Decimal(estimate([priority], "codex", {})["amount"]), Decimal("29.2"))
+
     def test_astra_long_context_and_priority(self):
         e = self.event("gpt-6-astra", counts(input=200000, cache_read=100000, output=1000),
                        request_input=300000, service_tier="priority")
