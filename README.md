@@ -122,7 +122,8 @@ Check `schema_version` and `generated_at`; consumers need not open SQLite.
 - Status duration is sampled; a sample lasts at most two poll intervals, so
   collector downtime is not charged to the preceding status. Missing time is
   unobserved. Quota histories contain account/provider window samples; never add
-  percentages or interpret them as a per-session allowance.
+  percentages or interpret them as a per-session allowance. Repeated unchanged
+  samples are pruned to the first and last of each run.
 - `account_billing`: optional, separate organization totals that may include
   other users/apps. Never add these totals to session costs.
 
