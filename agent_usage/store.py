@@ -165,6 +165,16 @@ class Store:
         before = now - 35 * 86400
         for table in ("usage", "observations", "spend"):
             self.db.execute(f"DELETE FROM {table} WHERE at<?", (before,))
+        # Claude repeats unchanged quota on every statusline refresh. Keep the first and
+        # last sample of each run, so every period still holds the values it saw; the
+        # session list lets SQLite seek the index instead of scanning all status rows.
+        self.db.execute("""
+            DELETE FROM observations WHERE rowid IN (
+                SELECT rowid FROM (
+                    SELECT rowid, value, LAG(value) OVER w AS prev, LEAD(value) OVER w AS next
+                    FROM observations WHERE kind='limits' AND session IN (SELECT key FROM sessions)
+                    WINDOW w AS (PARTITION BY session ORDER BY at))
+                WHERE value=prev AND value=next)""")
 
     def publish(self, report):
         atomic_json(self.directory / "snapshot.json", report)

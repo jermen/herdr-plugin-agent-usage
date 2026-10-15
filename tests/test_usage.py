@@ -149,6 +149,24 @@ class StoreTests(unittest.TestCase):
         p = self.report()["sessions"][0]["periods"]["today"]
         self.assertEqual(p["status_seconds_observed"], {"working": 120, "idle": 20})
 
+    def test_prune_keeps_only_quota_changes(self):
+        a, b = [{"window": "5h", "used_percent": 10}], [{"window": "5h", "used_percent": 11}]
+        today = windows(NOW, "Europe/Prague")["today"]
+        values = [(today - 300, a), (today - 200, a), (today - 100, a), (NOW - 30, a),
+                  (NOW - 20, b), (NOW - 10, b), (NOW, b)]
+        for at, value in values:
+            self.store.observe(self.key, "limits", at, value)
+        for at in (NOW - 20, NOW - 10, NOW):
+            self.store.observe(self.key, "status", at, "idle")
+        self.store.prune(NOW)
+        p = self.report()["sessions"][0]["periods"]
+        self.assertEqual([(s["at"], s["windows"]) for s in p["last_7_days"]["quota_samples"]],
+                         [(today - 300, a), (NOW - 30, a), (NOW - 20, b), (NOW, b)])
+        # The run that spans midnight still shows today, through its last sample.
+        self.assertEqual([s["at"] for s in p["today"]["quota_samples"]], [NOW - 30, NOW - 20, NOW])
+        self.assertEqual(self.store.db.execute(
+            "SELECT COUNT(*) FROM observations WHERE kind='status'").fetchone()[0], 3)
+
     def test_metric_freshness_independent(self):
         self.store.telemetry(self.key, {"observed_at": NOW, "limits": []})
         self.store.telemetry(self.key, {"observed_at": NOW - 60, "context": {"used_tokens": 4}})
