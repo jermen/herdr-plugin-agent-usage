@@ -144,8 +144,8 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(iso(windows(at, "Europe/Prague")["today"]), "2026-10-24T22:00:00+00:00")
 
     def test_status_does_not_bridge_collector_downtime(self):
-        self.store.observe(self.key, "status", NOW - 3600, "working")
-        self.store.observe(self.key, "status", NOW - 20, "idle")
+        self.store.status(self.key, NOW - 3600, "working", 120)
+        self.store.status(self.key, NOW - 20, "idle", 120)
         p = self.report()["sessions"][0]["periods"]["today"]
         self.assertEqual(p["status_seconds_observed"], {"working": 120, "idle": 20})
 
@@ -174,6 +174,20 @@ class StoreTests(unittest.TestCase):
         current = self.report()["sessions"][0]["current"]
         self.assertEqual(current["context"]["used_tokens"], 4)
         self.assertEqual(current["metric_observed_at"]["context"], NOW - 60)
+
+    def test_status_spans_merge_repeats_and_fold_old_rows(self):
+        # Rows written before spans: a lone poll, 300 s of downtime, then regular polls.
+        for at, value in ((NOW - 600, "working"), (NOW - 300, "working"), (NOW - 240, "working"),
+                          (NOW - 180, "working"), (NOW - 30, "idle")):
+            self.store.observe(self.key, "status", at, value)
+        self.store.fold_status(120)
+        self.store.status(self.key, NOW - 10, "idle", 120)
+        self.assertEqual([tuple(r) for r in self.store.db.execute("SELECT start,last,value FROM status_spans")],
+                         [(NOW - 600, NOW - 600, '"working"'), (NOW - 300, NOW - 180, '"working"'),
+                          (NOW - 30, NOW - 10, '"idle"')])
+        self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM observations").fetchone()[0], 0)
+        p = self.report()["sessions"][0]["periods"]["today"]
+        self.assertEqual(p["status_seconds_observed"], {"working": 360, "idle": 30})
 
     def test_session_scoping_and_missing_binding(self):
         root = self.root / "claude" / "projects" / "project"

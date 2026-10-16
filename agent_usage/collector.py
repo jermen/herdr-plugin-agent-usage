@@ -114,6 +114,7 @@ def read_log(store, key, agent, sid, path, now):
 
 def collect(store, snapshot, config, now):
     panes, groups = [], {}
+    gap = config.get("poll_seconds", 30) * 2
     for pane in snapshot["panes"]:
         agent = AGENTS.get(pane.get("agent"))
         if not agent:
@@ -131,6 +132,7 @@ def collect(store, snapshot, config, now):
         key = store.ensure_session(agent, sid, now)
         view["session_key"] = key
         groups.setdefault(key, []).append(view)
+    store.fold_status(gap)
     store.db.commit()
     for key, group in groups.items():
         agent, sid = key.split(":", 1)
@@ -154,11 +156,11 @@ def collect(store, snapshot, config, now):
             view["collection_status"] = status
         priority = {"working": 5, "blocked": 4, "done": 3, "idle": 2, "unknown": 1}
         observed = max((p["status"] for p in group), key=lambda s: priority.get(s, 0))
-        store.observe(key, "status", now, observed)
+        store.status(key, now, observed, gap)
     refresh_kimi(store, config, now)
     store.prune(now)
     store.db.commit()
     report = store.report(now, config.get("timezone", "UTC"), panes,
-                          max_status_gap=config.get("poll_seconds", 30) * 2, pricing=config.get("pricing"))
+                          max_status_gap=gap, pricing=config.get("pricing"))
     store.publish(report)
     return report

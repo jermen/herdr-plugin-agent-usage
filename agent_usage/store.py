@@ -23,6 +23,11 @@ def atomic_json(path, value):
             os.unlink(temporary)
 
 
+def continues(span, at, value, gap):
+    """A sample lasts at most gap, so a longer silence (collector downtime) starts a new span."""
+    return span[3] == value and span[2] <= at <= span[2] + gap
+
+
 class Store:
     def __init__(self, directory):
         self.directory = Path(directory)
@@ -43,6 +48,9 @@ class Store:
                 session TEXT, kind TEXT, at REAL, value TEXT,
                 PRIMARY KEY(session,kind,at));
             CREATE INDEX IF NOT EXISTS observation_time ON observations(session,kind,at);
+            CREATE TABLE IF NOT EXISTS status_spans (
+                session TEXT, start REAL, last REAL, value TEXT,
+                PRIMARY KEY(session,start));
             CREATE TABLE IF NOT EXISTS cursors (
                 path TEXT PRIMARY KEY, inode TEXT, offset INTEGER, state TEXT);
             CREATE TABLE IF NOT EXISTS transcripts (
@@ -91,6 +99,28 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO observations VALUES(?,?,?,?)",
                         (key, kind, at, json.dumps(value)))
 
+    def status(self, key, at, value, gap):
+        """Record a polled status; a repeat within gap extends the session's latest span."""
+        value = json.dumps(value)
+        span = self.db.execute("SELECT * FROM status_spans WHERE session=? ORDER BY start DESC LIMIT 1",
+                               (key,)).fetchone()
+        if span and continues(span, at, value, gap):
+            self.db.execute("UPDATE status_spans SET last=? WHERE session=? AND start=?", (at, key, span["start"]))
+        else:
+            self.db.execute("INSERT OR REPLACE INTO status_spans VALUES(?,?,?,?)", (key, at, at, value))
+
+    def fold_status(self, gap):
+        # Earlier versions stored a status row per poll (about 1M a month); fold them once.
+        spans = []
+        for key, at, value in self.db.execute(
+                "SELECT session,at,value FROM observations WHERE kind='status' ORDER BY session,at"):
+            if spans and spans[-1][0] == key and continues(spans[-1], at, value, gap):
+                spans[-1][2] = at
+            else:
+                spans.append([key, at, at, value])
+        self.db.executemany("INSERT OR REPLACE INTO status_spans VALUES(?,?,?,?)", spans)
+        self.db.execute("DELETE FROM observations WHERE kind='status'")
+
     def event(self, key, event):
         previous = self.db.execute("SELECT tokens,at FROM usage WHERE session=? AND event_id=?",
                                    (key, event["id"])).fetchone()
@@ -118,6 +148,9 @@ class Store:
                                          (key, starts["last_31_days"], now)))
             observations = list(self.db.execute(
                 "SELECT * FROM observations WHERE session=? AND at>=? AND at<=? ORDER BY at",
+                (key, starts["last_31_days"], now)))
+            spans = list(self.db.execute(
+                "SELECT * FROM status_spans WHERE session=? AND last>=? AND start<=? ORDER BY start",
                 (key, starts["last_31_days"] - max_status_gap, now)))
             spending = list(self.db.execute("SELECT * FROM spend WHERE session=? AND at>=? AND at<=?",
                                            (key, starts["last_31_days"], now)))
@@ -131,13 +164,12 @@ class Store:
                 tok["total"] = sum(tok[k] for k in ("input", "cache_read", "cache_write", "output"))
                 samples = [{"at": x["at"], "windows": json.loads(x["value"])}
                            for x in observations if x["kind"] == "limits" and x["at"] >= start]
-                states = [x for x in observations if x["kind"] == "status"]
                 durations = {}
-                for i, sample in enumerate(states):
-                    end = min(now, sample["at"] + max_status_gap,
-                              states[i + 1]["at"] if i + 1 < len(states) else now)
-                    seconds = max(0, end - max(start, sample["at"]))
-                    status = json.loads(sample["value"])
+                for i, span in enumerate(spans):
+                    end = min(now, span["last"] + max_status_gap,
+                              spans[i + 1]["start"] if i + 1 < len(spans) else now)
+                    seconds = max(0, end - max(start, span["start"]))
+                    status = json.loads(span["value"])
                     if seconds:
                         durations[status] = durations.get(status, 0) + seconds
                 amounts = {}
@@ -163,6 +195,7 @@ class Store:
     def prune(self, now):
         # A 35-day retention margin preserves the sample before any 31-day boundary.
         before = now - 35 * 86400
+        self.db.execute("DELETE FROM status_spans WHERE last<?", (before,))
         for table in ("usage", "observations", "spend"):
             self.db.execute(f"DELETE FROM {table} WHERE at<?", (before,))
         # Claude repeats unchanged quota on every statusline refresh. Keep the first and
