@@ -4,6 +4,12 @@ Session usage, quota, context and spending data for other Herdr plugins.
 An original Python standard-library plugin with no UI, model calls or dependency
 on another Herdr plugin. Requires Python 3.11+ and Herdr 0.9.1 on Linux or macOS.
 
+![Usage rows under each agent in the Herdr sidebar](docs/sidebar.png)
+
+*The second row under each agent is this plugin's snapshot as rendered by
+[`jermen.status-indicator`](https://github.com/jermen/herdr-plugin-status-indicator):
+quota, context, a per-token session's cost and subagents. A demo session with stand-in agents.*
+
 ## Install
 
 ```sh
