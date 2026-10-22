@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from agent_usage.adapters import parse, claude_statusline
 from agent_usage.billing import fetch_costs, import_spend, refresh
-from agent_usage.collector import collect, read_log
+from agent_usage.collector import IdentityError, collect, read_log
 from agent_usage.model import counts, iso, timestamp, windows
 from agent_usage.store import Store
 from usage import ingest_claude
@@ -33,7 +33,40 @@ def claude(at, output=20):
                 "content": [{"text": "PRIVATE PROMPT MUST NOT BE SAVED"}]}}
 
 
+LUMO_SID = "f21a7825-7460-470e-89e8-c29ac8cc39c9"
+
+
+def lumo(seq, at, kind, **body):
+    return {"seq": seq, "ts": int(at * 1000), "prev": "p", "kind": kind, "body": body,
+            "hash": f"h{seq}"}
+
+
+def lumo_session(at=NOW - 10, sid=LUMO_SID):
+    return [lumo(0, at, "session", session_id=sid, model="lumo-lite", provider="lumo",
+                 system_prompt="PRIVATE PROMPT MUST NOT BE SAVED"),
+            lumo(1, at + 1, "user", text="PRIVATE PROMPT MUST NOT BE SAVED"),
+            lumo(2, at + 2, "assistant", text="hi", served_by="lumo-max",
+                 usage={"prompt_tokens": 300, "completion_tokens": 20, "cached_tokens": 200})]
+
+
 class AdapterTests(unittest.TestCase):
+    def test_lumo_usage_cache_model_and_compaction(self):
+        state = {}
+        rows = lumo_session()
+        self.assertEqual(parse("lumo", rows[0], state), (None, {}))
+        event, p = parse("lumo", rows[2], state)
+        self.assertEqual(event["tokens"], counts(input=100, cache_read=200, output=20))
+        self.assertEqual(event["at"], NOW - 8)
+        self.assertEqual(event["model"], "lumo-max")
+        self.assertEqual(p["context"]["used_tokens"], 320)
+        self.assertIsNone(p["context"]["used_percent"])
+        _, p = parse("lumo", lumo(3, NOW, "compaction", tokens_before=320, tokens_after=40), state)
+        self.assertEqual(p["context"]["used_tokens"], 40)
+        # Without cached_tokens (older Lumo Code), all of the prompt is input.
+        event, _ = parse("lumo", lumo(4, NOW, "assistant", usage={"prompt_tokens": 50,
+                                                                  "completion_tokens": 5}), state)
+        self.assertEqual(event["tokens"], counts(input=50, output=5))
+
     def test_codex_delta_and_repeated_notification(self):
         state = {}
         a, p = parse("codex", codex(NOW), state)
@@ -278,6 +311,49 @@ class StoreTests(unittest.TestCase):
             "kind": "id", "value": "early", "agent": "claude"}}]}
         ingest_claude(self.store, client, payload, NOW)
         self.assertEqual(self.store.transcript_path("claude:early"), payload["transcript_path"])
+
+    def lumo_file(self, rows, folder="project", name=None):
+        path = self.root / "lumo/sessions" / folder / (name or f"1791232089870_{LUMO_SID[:8]}.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(x) + "\n" for x in rows))
+        return path
+
+    def test_lumo_session_from_pane_metadata(self):
+        self.lumo_file(lumo_session())
+        pane = {"pane_id": "p1", "agent": "lumo", "agent_status": "idle",
+                "tokens": {"lumo_session": LUMO_SID}}
+        config = {"roots": {"lumo": str(self.root / "lumo")}}
+        report = collect(self.store, {"panes": [pane]}, config, NOW)
+        self.assertEqual(report["panes"][0]["collection_status"], "ok")
+        session = next(x for x in report["sessions"] if x["agent"] == "lumo")
+        self.assertEqual(session["periods"]["today"]["tokens"]["total"], 320)
+        self.assertEqual(session["current"]["model"], "lumo-max")
+        self.assertIsNone(session["current"]["context"]["used_percent"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        # The window comes later, from the pane; context is recomputed without a new reply.
+        pane["tokens"]["lumo_context_window"] = "1000"
+        session = next(x for x in collect(self.store, {"panes": [pane]}, config, NOW)["sessions"]
+                       if x["agent"] == "lumo")
+        self.assertEqual(session["current"]["context"]["used_percent"], 32)
+        self.assertEqual(session["periods"]["today"]["usage_records_observed"], 1)
+
+    def test_lumo_session_found_by_id_and_checked(self):
+        self.lumo_file(lumo_session())
+        # Another session whose ID starts the same is not this one.
+        self.lumo_file(lumo_session(sid=LUMO_SID[:8] + "-0000-0000-0000-000000000000"),
+                       folder="other", name=f"1791232000000_{LUMO_SID[:8]}.jsonl")
+        pane = {"pane_id": "p1", "agent": "lumo", "tokens": {"lumo_session": LUMO_SID}}
+        config = {"roots": {"lumo": str(self.root / "lumo")}}
+        self.assertEqual(collect(self.store, {"panes": [pane]}, config, NOW)["panes"][0][
+            "collection_status"], "ok")
+        unreported = {"pane_id": "p2", "agent": "lumo"}
+        self.assertEqual(collect(self.store, {"panes": [unreported]}, config, NOW)["panes"][0][
+            "collection_status"], "session_unreported")
+        # A file that turns out to belong to another session is rejected.
+        wrong = self.lumo_file(lumo_session(sid="0" * 8 + LUMO_SID[8:]), folder="wrong")
+        key = self.store.ensure_session("lumo", LUMO_SID, NOW)
+        with self.assertRaises(IdentityError):
+            read_log(self.store, key, "lumo", LUMO_SID, wrong, NOW)
 
     def test_non_file_transcript_is_rejected_without_blocking(self):
         path = self.root / "s1.jsonl"

@@ -7,7 +7,33 @@ def parse(agent, row, state):
     ts = timestamp(row.get("timestamp"))
     patch = {}
     event = None
-    if agent == "codex":
+    if agent == "lumo":
+        # Lumo Code's session file: one hash-chained entry per line, timed in milliseconds.
+        ms = number(row.get("ts"))
+        ts = ms / 1000 if ms is not None else None
+        body = row.get("body") or {}
+        kind = row.get("kind")
+        if kind == "session":
+            state["model"], state["provider"] = body.get("model"), body.get("provider")
+        elif kind == "model":
+            state["model"] = body.get("model")
+        elif kind == "compaction" and body.get("tokens_after") is not None:
+            patch["context"] = context(body.get("tokens_after"))
+        elif kind == "assistant" and isinstance(body.get("usage"), dict):
+            u = body["usage"]
+            prompt, cached = number(u.get("prompt_tokens")) or 0, number(u.get("cached_tokens")) or 0
+            tok = counts(input=max(0, prompt - cached), cache_read=cached,
+                         output=u.get("completion_tokens"))
+            if any(tok.values()):
+                event = {"id": str(row.get("hash") or digest([row.get("seq"), ts, u])), "at": ts,
+                         "tokens": tok, "details": {"provider": state.get("provider")}}
+                state["model"] = body.get("served_by") or state.get("model")
+            if u.get("prompt_tokens") is not None:
+                patch["context"] = context(prompt + (number(u.get("completion_tokens")) or 0))
+        if patch or event:
+            patch["model"] = state.get("model")
+            patch["provider"] = state.get("provider")
+    elif agent == "codex":
         payload = row.get("payload") or {}
         if row.get("type") == "turn_context":
             state["model"] = payload.get("model")

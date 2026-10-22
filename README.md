@@ -41,8 +41,8 @@ estimate need statusLine input. In particular, spending alongside `ctx --` can
 mean that the wrapper is missing. Run the normal installer to enable it.
 After Claude's next response, allow one collection interval (normally 30 seconds)
 for context to appear. Existing Claude sessions may need a restart to load the setting.
-Nothing is installed into Codex or Kimi. Herdr's normal integrations must report
-agent session IDs.
+Nothing is installed into Codex, Kimi or Lumo Code. Herdr's normal integrations must report
+agent session IDs; Lumo Code reports its own (see below).
 
 Configuration: `~/.config/herdr/plugins/config/jermen.agent-usage/config.json`.
 The installer only creates it if absent. State defaults to
@@ -68,6 +68,7 @@ modified. Startup and agent events ensure the watcher starts.
 | Claude Code | Session JSONL, deduplicated request/message IDs | Last input; statusLine adds capacity/percentage | statusLine with reset times | Model, input/output, cache reads, 5m/1h writes |
 | Codex | Native cumulative token_count deltas | Last usage and context window | Native rate_limits and original timestamp | Model rates, cache, long-context pricing |
 | Kimi | Native wire.jsonl StatusUpdate | Tokens/capacity/ratio | Optional Coding /usages API | Configured model when absent from wire log |
+| Lumo Code | Session JSONL `assistant` usage, cached tokens when recorded | Last prompt + reply, or compaction's result; capacity from the pane | — | Unpriced: Lumo is a subscription |
 
 Only exact session IDs reported by Herdr are followed. Sessions sharing a cwd
 remain separate; the same session in two panes counts once. Missing/ambiguous
@@ -78,8 +79,15 @@ is retained only in private collector state, not in the consumer snapshot.
 This supports per-session `CLAUDE_CONFIG_DIR` profiles even when Herdr's daemon
 has a different environment. The first statusLine update can register a session
 before the first poll only after verifying its exact live Herdr binding.
-Without a reported path, set `roots.claude`, `roots.codex` or `roots.kimi` for
-custom data homes.
+Without a reported path, set `roots.claude`, `roots.codex`, `roots.kimi` or
+`roots.lumo` for custom data homes.
+
+Herdr binds sessions only for agents it supports natively, so Lumo Code, in a
+Herdr pane, puts its session on the pane as display metadata instead: the tokens
+`lumo_session` (the ID) and `lumo_context_window`. The ID is followed like a Herdr
+binding: the file is found under `$LUMO_HOME/sessions/*/` (default `~/.lumo`, or
+`roots.lumo`) by the ID's first 8 characters in its name, and its first entry must
+carry the whole ID. (Herdr cuts token values at 80 characters, too short for a path.)
 
 Retained transcript usage is backfilled on first observation. Later passes seek
 to the committed byte offset. Partial final lines are retried; malformed complete

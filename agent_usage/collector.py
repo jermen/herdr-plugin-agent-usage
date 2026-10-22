@@ -7,9 +7,10 @@ import stat
 from pathlib import Path
 
 from .adapters import parse
+from .model import context, number
 from .quota import refresh_kimi
 
-AGENTS = {"claude": "claude", "claude-code": "claude", "codex": "codex", "kimi": "kimi"}
+AGENTS = {"claude": "claude", "claude-code": "claude", "codex": "codex", "kimi": "kimi", "lumo": "lumo"}
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,160}\Z")
 MAX_LINE = 16 * 1024 * 1024
 
@@ -48,6 +49,16 @@ def claude_transcript_path(sid, value):
     return path
 
 
+def lumo_session_id(path):
+    """The session ID in a Lumo Code session file's first entry."""
+    try:
+        with path.open("rb") as stream:
+            row = json.loads(stream.readline(MAX_LINE))
+        return (row.get("body") or {}).get("session_id") if row.get("kind") == "session" else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def paths(agent, sid, config, reported_path=None):
     roots = config.get("roots", {})
     home = Path.home()
@@ -60,8 +71,25 @@ def paths(agent, sid, config, reported_path=None):
             return [exact]
         root = Path(roots.get(agent, os.environ.get("CLAUDE_CONFIG_DIR", home / ".claude"))).expanduser()
         return sorted(root.glob(f"projects/*/{sid}.jsonl"))
+    if agent == "lumo":
+        root = Path(roots.get(agent, os.environ.get("LUMO_HOME", home / ".lumo"))).expanduser()
+        # Lumo Code names a session's file `<ms>_<first 8 of its ID>.jsonl`; the first entry
+        # has all of it.
+        return [p for p in sorted(root.glob(f"sessions/*/*_{sid[:8]}.jsonl")) if lumo_session_id(p) == sid]
     root = Path(roots.get(agent, os.environ.get("KIMI_SHARE_DIR", home / ".kimi"))).expanduser()
     return sorted(root.glob(f"sessions/*/{sid}/wire.jsonl"))
+
+
+def lumo_window(store, key, window):
+    """Lumo Code reports its context window to Herdr rather than writing it down; apply it to
+    the latest context, as of when that was observed."""
+    telemetry = json.loads(store.db.execute("SELECT telemetry FROM sessions WHERE key=?",
+                                            (key,)).fetchone()[0])
+    current = telemetry.get("context") or {}
+    if current.get("used_tokens") is None or current.get("capacity_tokens") == window:
+        return
+    at = telemetry.get("metric_observed_at", {}).get("context", 0)
+    store.telemetry(key, {"observed_at": at, "context": context(current["used_tokens"], window)})
 
 
 def read_log(store, key, agent, sid, path, now):
@@ -97,6 +125,9 @@ def read_log(store, key, agent, sid, path, now):
                         raise IdentityError("session identity mismatch")
                 if agent == "claude" and row.get("sessionId") not in (None, sid):
                     continue
+                if agent == "lumo" and row.get("kind") == "session":
+                    if (row.get("body") or {}).get("session_id") != sid:
+                        raise IdentityError("session identity mismatch")
                 event, patch = parse(agent, row, state)
                 if event and now - 35 * 86400 <= event["at"] <= now:
                     store.event(key, event)
@@ -113,7 +144,7 @@ def read_log(store, key, agent, sid, path, now):
 
 
 def collect(store, snapshot, config, now):
-    panes, groups = [], {}
+    panes, groups, windows = [], {}, {}
     gap = config.get("poll_seconds", 30) * 2
     for pane in snapshot["panes"]:
         agent = AGENTS.get(pane.get("agent"))
@@ -123,6 +154,11 @@ def collect(store, snapshot, config, now):
         sid = binding.get("value") if binding.get("kind") == "id" else None
         if binding.get("agent") and AGENTS.get(binding["agent"]) != agent:
             sid = None
+        tokens = pane.get("tokens") or {}
+        if agent == "lumo" and sid is None:
+            # Herdr binds sessions only for agents it supports itself; Lumo Code puts its
+            # session on the pane as metadata tokens instead.
+            sid = tokens.get("lumo_session")
         view = {"pane_id": pane["pane_id"], "agent": agent,
                 "status": pane.get("agent_status", "unknown"), "session_key": None}
         panes.append(view)
@@ -131,6 +167,9 @@ def collect(store, snapshot, config, now):
             continue
         key = store.ensure_session(agent, sid, now)
         view["session_key"] = key
+        window = number(tokens.get("lumo_context_window")) if agent == "lumo" else None
+        if window:
+            windows[key] = window
         groups.setdefault(key, []).append(view)
     store.fold_status(gap)
     store.db.commit()
@@ -145,6 +184,8 @@ def collect(store, snapshot, config, now):
             try:
                 with store.db:
                     result = read_log(store, key, agent, sid, found[0], now)
+                    if key in windows:
+                        lumo_window(store, key, windows[key])
                 status = "ok" if result["caught_up"] else "catching_up"
                 if result["malformed_records"]:
                     status = "partial"
