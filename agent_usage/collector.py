@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 
 from .adapters import parse
+from .history import roll
 from .model import context, number
 from .quota import refresh_kimi
 
@@ -143,6 +144,12 @@ def read_log(store, key, agent, sid, path, now):
             "malformed_records": malformed, "caught_up": offset >= info.st_size}
 
 
+def locate(store, key, config):
+    agent, sid = key.split(":", 1)
+    found = paths(agent, sid, config, store.transcript_path(key))
+    return found[0] if len(found) == 1 else None
+
+
 def collect(store, snapshot, config, now):
     panes, groups, windows = [], {}, {}
     gap = config.get("poll_seconds", 30) * 2
@@ -199,6 +206,9 @@ def collect(store, snapshot, config, now):
         observed = max((p["status"] for p in group), key=lambda s: priority.get(s, 0))
         store.status(key, now, observed, gap)
     refresh_kimi(store, config, now)
+    with store.db:
+        # Before pruning, so hours near the retention edge are folded while complete.
+        roll(store, now, gap, config.get("pricing"), locate=lambda key: locate(store, key, config))
     store.prune(now)
     store.db.commit()
     report = store.report(now, config.get("timezone", "UTC"), panes,

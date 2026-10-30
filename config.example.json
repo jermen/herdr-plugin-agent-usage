@@ -1,6 +1,7 @@
 {
   "timezone": "Europe/Prague",
   "poll_seconds": 30,
+  "report": {"subscriptions": {"claude": 200}},
   "pricing": {
     "service_tiers": {"codex": "standard"},
     "default_models": {},

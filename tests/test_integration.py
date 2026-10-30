@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -18,7 +19,7 @@ from agent_usage.model import counts
 from agent_usage.pricing import estimate
 from agent_usage.quota import parse_kimi, refresh_kimi
 from agent_usage.store import Store
-from install import configure_claude, main as install_main
+from install import configure_claude, configure_key, main as install_main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,6 +57,13 @@ class PricingTests(unittest.TestCase):
                        request_input=300000, service_tier="priority")
         # Long-context priority: 40 input, 4 cached, 150 output / million.
         self.assertEqual(Decimal(estimate([e], "codex", {})["amount"]), Decimal("8.55"))
+
+    def test_haiku_long_prompt_uses_listed_prices(self):
+        short = self.event("claude-haiku-5-5", counts(input=50000, cache_read=40000, output=10000))
+        self.assertEqual(Decimal(estimate([short], "claude", {})["amount"]), Decimal("0.0104"))
+        # Cache reads count towards the 100k threshold; the whole request pays the long rates.
+        long = self.event("claude-haiku-5-5", counts(input=50000, cache_read=60000, output=10000))
+        self.assertEqual(Decimal(estimate([long], "claude", {})["amount"]), Decimal("0.053"))
 
     def test_unknown_model_is_not_free(self):
         e = self.event("future-model", counts(input=1000))
@@ -101,7 +109,8 @@ class InstallerTests(unittest.TestCase):
         previous_umask = os.umask(0o077)
         try:
             with patch("install.Path.home", return_value=self.root), patch.dict(os.environ, {
-                    "XDG_STATE_HOME": str(self.root / "state")}), patch("sys.argv", ["install.py", *args]), \
+                    "XDG_STATE_HOME": str(self.root / "state"),
+                    "HERDR_CONFIG_PATH": str(self.root / "herdr.toml")}), patch("sys.argv", ["install.py", *args]), \
                     patch("install.subprocess.run"), patch("sys.stdout", new_callable=io.StringIO):
                 os.environ.pop("CLAUDE_CONFIG_DIR", None)
                 if profile is not None:
@@ -231,12 +240,31 @@ class IntegrationTests(unittest.TestCase):
 
     def test_no_link_skips_linking_but_starts_the_collector(self):
         with patch("install.Path.home", return_value=self.root), patch.dict(os.environ, {
-                "XDG_STATE_HOME": str(self.root / "state"), "HERDR_BIN_PATH": "/bin/herdr"}), \
+                "XDG_STATE_HOME": str(self.root / "state"), "HERDR_BIN_PATH": "/bin/herdr",
+                "HERDR_CONFIG_PATH": str(self.root / "herdr.toml")}), \
                 patch("sys.argv", ["install.py", "--no-link", "--no-claude-statusline"]), \
                 patch("install.subprocess.run") as run, patch("sys.stdout", new_callable=io.StringIO):
             install_main()
         self.assertEqual([call.args[0] for call in run.call_args_list],
-                         [["/bin/herdr", "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"]])
+                         [["/bin/herdr", "server", "reload-config"],
+                          ["/bin/herdr", "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"]])
+
+    def test_report_key_block_is_managed_and_refuses_a_taken_key(self):
+        config = self.root / "herdr.toml"
+        config.write_text('[keys]\nprefix = "ctrl+a"\n\n[[keys.command]]\nkey = "prefix+m"\n'
+                          'type = "plugin_action"\ncommand = "x.open"\n')
+        configure_key(config, "prefix+u")
+        first = config.read_text()
+        self.assertEqual(first.count("agent-usage keybinding block"), 2)
+        self.assertIn('command = "jermen.agent-usage.open"', first)
+        commands = tomllib.loads(first)["keys"]["command"]
+        self.assertEqual([c["key"] for c in commands], ["prefix+m", "prefix+u"])
+        self.assertEqual(configure_key(config, "prefix+u"), "report key unchanged")
+        configure_key(config, "prefix+y")
+        self.assertEqual([c["key"] for c in tomllib.loads(config.read_text())["keys"]["command"]],
+                         ["prefix+m", "prefix+y"])
+        with self.assertRaises(ValueError):
+            configure_key(config, "prefix+m")
 
     def test_kimi_quota_units_and_credentials_not_persisted(self):
         payload = {"usage": {"limit": "100", "remaining": "25"}, "limits": [

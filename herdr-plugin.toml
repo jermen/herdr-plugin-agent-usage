@@ -19,6 +19,16 @@ title = "Configure Claude statusLine wrapper and start"
 command = ["python3", "install.py", "--no-link"]
 
 [[actions]]
+id = "open"
+title = "Open usage report"
+command = ["python3", "usage.py", "open"]
+
+[[actions]]
+id = "backfill"
+title = "Import older session files into the usage history"
+command = ["python3", "usage.py", "backfill"]
+
+[[actions]]
 id = "collect"
 title = "Collect usage now"
 command = ["python3", "usage.py", "collect"]
@@ -30,3 +40,11 @@ command = ["python3", "usage.py", "start"]
 [[events]]
 on = "pane.agent_status_changed"
 command = ["python3", "usage.py", "start"]
+
+[[panes]]
+id = "report"
+title = "Agent usage"
+placement = "popup"
+width = "90%"
+height = "90%"
+command = ["python3", "usage.py", "tui"]

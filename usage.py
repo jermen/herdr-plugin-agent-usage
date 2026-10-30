@@ -16,6 +16,8 @@ from agent_usage.billing import import_spend, refresh
 from agent_usage.collector import AGENTS, SESSION_ID, Herdr, claude_transcript_path, collect
 from agent_usage.store import Store
 
+PLUGIN_ID = "jermen.agent-usage"
+
 
 def settings(args):
     config_dir = Path(os.environ.get("HERDR_PLUGIN_CONFIG_DIR",
@@ -111,12 +113,39 @@ def watch(directory, socket_path, config):
 def main(argv=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["start", "watch", "collect", "snapshot", "path", "ingest-claude", "import-spend"])
+    parser.add_argument("command", choices=["start", "watch", "collect", "snapshot", "path", "ingest-claude",
+                                            "import-spend", "backfill", "report", "tui", "open"])
     parser.add_argument("--config")
     parser.add_argument("--socket")
     parser.add_argument("--state-dir", help="State root; an endpoint subdirectory is appended")
+    parser.add_argument("--period", choices=["day", "week", "month"], default="day", help="report: bucket size")
+    parser.add_argument("--json", action="store_true", help="report: JSON instead of text")
+    parser.add_argument("--heatmap", action="store_true", help="report: activity heatmap instead of periods")
+    parser.add_argument("--days", type=float, help="backfill: only session files changed in the last N days")
     args = parser.parse_args(argv)
+    if args.command == "open":
+        herdr = os.environ.get("HERDR_BIN_PATH") or "herdr"
+        sys.exit(subprocess.run([herdr, "plugin", "pane", "open", "--plugin", PLUGIN_ID,
+                                 "--entrypoint", "report"], check=False).returncode)
     config, socket_path, directory = settings(args)
+    zone = config.get("timezone", "UTC")
+    if args.command in ("report", "tui"):
+        from agent_usage import tui
+        load = tui.loader(directory / "usage.sqlite3", zone, config)
+        if args.command == "tui":
+            tui.run(load)
+        elif args.json:
+            from agent_usage.summary import report
+            db = tui.connect(directory / "usage.sqlite3")
+            try:
+                print(json.dumps(report(db, zone, time.time(), config, args.period)))
+            finally:
+                db.close()
+        else:
+            view = tui.View(load)
+            view.period, view.heatmap = args.period, args.heatmap
+            print(tui.plain(view.render(120, 10 ** 4)))
+        return
     if args.command == "path":
         print(directory / "snapshot.json")
         return
@@ -147,6 +176,15 @@ def main(argv=None):
     try:
         if args.command == "collect":
             print(json.dumps(run_once(store, Herdr(socket_path), config)))
+        elif args.command == "backfill":
+            from agent_usage.history import backfill
+            now = time.time()
+            since = now - args.days * 86400 if args.days else None
+            with (store.directory / "collect.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                result = backfill(store, config, now, since, progress=lambda n, _path: n % 50 or print(
+                    f"agent-usage: {n} session files", file=sys.stderr, flush=True))
+            print(json.dumps(result))
         else:
             data = json.loads(sys.stdin.read(1024 * 1024 + 1))
             with (store.directory / "collect.lock").open("a") as lock, store.db:
