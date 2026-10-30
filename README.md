@@ -47,7 +47,8 @@ agent session IDs; Lumo Code reports its own (see below).
 Configuration: `~/.config/herdr/plugins/config/jermen.agent-usage/config.json`.
 The installer only creates it if absent. State defaults to
 `$XDG_STATE_HOME/herdr-agent-usage` or `~/.local/state/herdr-agent-usage`.
-Each endpoint gets a subdirectory derived from its socket path.
+Each endpoint gets a subdirectory derived from its socket path. The optional
+`report` key holds plan prices for the usage report (see below).
 
 ```sh
 python3 usage.py path       # Prints the resolved snapshot.json path
@@ -154,6 +155,61 @@ for session in snapshot['sessions']:
 
 Files are private to the OS user. Usage, spending and observation records are
 retained for 35 days. Session IDs, latest metrics and cursors remain for replay.
+Hourly rollups of them are kept beyond that for the usage report (below).
+
+## Usage report: daily, weekly and monthly history
+
+`prefix+u` opens a popup with costs per day, ISO week (Monday start) or month.
+The installer adds that key to Herdr's `config.toml` in a managed block, with a
+backup next to it; `--key` picks another key and `--no-key` skips it. The plugin
+action `open` (`python3 usage.py open`) opens the same pane.
+
+- Headline: today, this week and this month, each compared with the previous
+  period at the same elapsed point; the month's projection; the active-day streak;
+  a 30-day cost sparkline.
+- Table: estimated cost in total and per agent (Lumo Code in tokens, as it is
+  unpriced), tokens, cache-hit share of prompt tokens, agent working time, time
+  agents spent blocked on you, and sessions. `↑`/`↓` select a period.
+- Detail for the selected period: models, projects (each session's working
+  directory) and top sessions, cost per agent-hour, quota peaks, and the models
+  missing from the price catalog.
+- `tab`: heatmaps of agent working time and spend for the selected period,
+  with the busiest slot and the night and weekend shares. A week or month is a
+  weekday x local hour grid; a day is its 24 hours against the average active
+  day of the four weeks before. `↑`/`↓` move to the next period here too.
+
+`d`/`w`/`m` switch the period, `q` closes. The pane reloads every minute; `r`
+reloads now. Outside Herdr, the same
+views print as text, or as JSON for other tools:
+
+```sh
+python3 usage.py report --period week
+python3 usage.py report --heatmap --period week
+python3 usage.py report --period month --json
+```
+
+Each collection (every `poll_seconds`, 30 by default) folds the hours touched by
+new usage, status and quota records into `rollup_*` tables, which pruning leaves alone. Costs are the same
+API-equivalent estimates as `estimated_spend`, priced when the hour is folded.
+Status and quota history start with the collector.
+
+Older usage, including sessions Herdr never observed, comes from the session
+files still on disk (Claude Code, Codex, Lumo Code):
+
+```sh
+python3 usage.py backfill            # or the `backfill` plugin action
+python3 usage.py backfill --days 7   # only files changed in the last week
+```
+
+Record IDs match the collector's, so repeats and overlaps with collected
+sessions are idempotent. Backfilled sessions are not added to `snapshot.json`.
+Claude Code can delete old transcripts (its `cleanupPeriodDays` setting), so
+backfill only reaches what is left. Optional monthly plan prices let the
+headline put API-equivalent value next to the plan:
+
+```json
+{"report": {"subscriptions": {"claude": 200}}}
+```
 
 ## Token-based spending: no billing feed required
 
@@ -249,14 +305,16 @@ python3 -m unittest discover -s tests -v
 herdr plugin list
 herdr plugin action invoke collect --plugin jermen.agent-usage
 python3 usage.py snapshot
+python3 usage.py report
 ```
 
 Uninstall (or unlink) jermen.agent-usage and terminate its `usage.py watch`
 process to stop collection: Herdr startup commands are not supervised. Restore
 only the prior statusLine object from claude-statusline.json's original field
 (or remove it if originally absent), preserving other settings changed since
-installation. The full settings backup is also available. Private state can be
-retained or explicitly removed. No other agent settings are changed.
+installation. The full settings backup is also available. Remove the managed
+`agent-usage keybinding block` from Herdr's `config.toml` to drop the report key.
+Private state can be retained or explicitly removed. No other agent settings are changed.
 
 ## Primary references
 

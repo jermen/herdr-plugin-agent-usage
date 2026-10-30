@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure a reversible Claude metrics wrapper and start the collector.
+"""Configure a reversible Claude metrics wrapper and the report key, then start the collector.
 
 Without --no-link it also links this checkout as a local plugin (development)."""
 import argparse
@@ -9,11 +9,13 @@ import shlex
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 from agent_usage.store import atomic_json
 
 ROOT = Path(__file__).resolve().parent
+KEY_BLOCK = ("# >>> agent-usage keybinding block", "# <<< agent-usage keybinding block")
 
 
 def configure_claude(settings_path, config_dir, state_dir, config_file):
@@ -48,6 +50,57 @@ def configure_claude(settings_path, config_dir, state_dir, config_file):
     return "configured; original settings backed up alongside settings.json"
 
 
+def herdr_config_path():
+    if os.environ.get("HERDR_CONFIG_PATH"):
+        return Path(os.environ["HERDR_CONFIG_PATH"]).expanduser()
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "herdr" / "config.toml"
+
+
+def remove_block(text):
+    start, end = KEY_BLOCK
+    kept, inside = [], False
+    for line in text.splitlines(keepends=True):
+        if line.strip() == start:
+            inside = True
+        elif inside and line.strip() == end:
+            inside = False
+        elif not inside:
+            kept.append(line)
+    if inside:
+        raise ValueError("unterminated agent-usage block in the Herdr config; fix it by hand")
+    return "".join(kept)
+
+
+def bound_keys(parsed):
+    keys = parsed.get("keys", {})
+    used = {v for k, v in keys.items() if k != "command" and isinstance(v, str)}
+    return used | {c.get("key") for c in keys.get("command", []) if isinstance(c, dict)}
+
+
+def configure_key(path, key):
+    """A managed [[keys.command]] block that opens the report pane; replaced on rerun."""
+    before = path.read_text() if path.exists() else ""
+    rest = remove_block(before)
+    if key in bound_keys(tomllib.loads(rest)):
+        raise ValueError(f"{key} is already bound in {path}; pass --key or --no-key")
+    start, end = KEY_BLOCK
+    block = (f"{start}\n[[keys.command]]\nkey = {json.dumps(key)}\ntype = \"plugin_action\"\n"
+             f'command = "jermen.agent-usage.open"\ndescription = "Agent usage report"\n{end}\n')
+    after = rest.rstrip("\n") + ("\n\n" if rest.strip() else "") + block
+    tomllib.loads(after)
+    if after == before:
+        return "report key unchanged"
+    target = path.resolve()  # A symlinked config (dotfiles) keeps its link.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        backup = target.with_name(target.name + ".agent-usage-" + str(time.time_ns()) + ".bak")
+        backup.write_text(before)
+    temporary = target.with_name("." + target.name + ".agent-usage.tmp")
+    temporary.write_text(after)
+    os.replace(temporary, target)
+    return f"{key} opens the usage report; previous config backed up alongside"
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -55,6 +108,8 @@ def main():
                         help="configure the Claude metrics wrapper (default: enabled); "
                              "--no-claude-statusline leaves Claude settings unchanged")
     parser.add_argument("--timezone", default="Europe/Prague")
+    parser.add_argument("--key", default="prefix+u", help="Herdr key that opens the report (default: prefix+u)")
+    parser.add_argument("--no-key", action="store_true", help="leave the Herdr keybindings unchanged")
     parser.add_argument("--no-link", action="store_true",
                         help="do not link this checkout; for plugins installed with `herdr plugin install`")
     args = parser.parse_args()
@@ -74,6 +129,9 @@ def main():
         settings_path = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "settings.json"
         print(configure_claude(settings_path, config_dir, state_dir, config_file))
     herdr = os.environ.get("HERDR_BIN_PATH") or "herdr"
+    if not args.no_key:
+        print(configure_key(herdr_config_path(), args.key))
+        subprocess.run([herdr, "server", "reload-config"], check=False)
     if not args.no_link:
         subprocess.run([herdr, "plugin", "link", str(ROOT), "--enabled"], check=True)
     subprocess.run([herdr, "plugin", "action", "invoke", "start", "--plugin", "jermen.agent-usage"], check=True)

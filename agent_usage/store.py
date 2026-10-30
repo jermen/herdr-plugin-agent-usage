@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from . import history
 from .model import TOKENS, iso, windows
 
 
@@ -63,6 +64,7 @@ class Store:
         ''')
         if "details" not in {r[1] for r in self.db.execute("PRAGMA table_info(usage)")}:
             self.db.execute("ALTER TABLE usage ADD COLUMN details TEXT NOT NULL DEFAULT '{}'")
+        history.setup(self.db)
 
     def ensure_session(self, agent, sid, now):
         key = agent + ":" + sid
