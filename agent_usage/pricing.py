@@ -40,7 +40,11 @@ def estimate(events, agent, config):
         if request_input is None:
             request_input = sum(tokens.get(k, 0) for k in ("input", "cache_read", "cache_write"))
         threshold = price.get("long_context_threshold")
-        if threshold and request_input > threshold:
+        long_rates = price.get("long_context_tiers", {}).get(tier)
+        if threshold and request_input > threshold and long_rates:
+            # Prices listed for long prompts (Claude Haiku 5.5) replace the multipliers.
+            rates = dict(long_rates)
+        elif threshold and request_input > threshold:
             for k in ("input", "cache_read", "cache_write", "cache_write_1h"):
                 if k in rates:
                     rates[k] = str(Decimal(str(rates[k])) * Decimal("2"))

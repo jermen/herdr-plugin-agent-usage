@@ -58,6 +58,13 @@ class PricingTests(unittest.TestCase):
         # Long-context priority: 40 input, 4 cached, 150 output / million.
         self.assertEqual(Decimal(estimate([e], "codex", {})["amount"]), Decimal("8.55"))
 
+    def test_haiku_long_prompt_uses_listed_prices(self):
+        short = self.event("claude-haiku-5-5", counts(input=50000, cache_read=40000, output=10000))
+        self.assertEqual(Decimal(estimate([short], "claude", {})["amount"]), Decimal("0.0104"))
+        # Cache reads count towards the 100k threshold; the whole request pays the long rates.
+        long = self.event("claude-haiku-5-5", counts(input=50000, cache_read=60000, output=10000))
+        self.assertEqual(Decimal(estimate([long], "claude", {})["amount"]), Decimal("0.053"))
+
     def test_unknown_model_is_not_free(self):
         e = self.event("future-model", counts(input=1000))
         v = estimate([e], "codex", {})
