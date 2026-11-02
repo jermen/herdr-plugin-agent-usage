@@ -10,6 +10,7 @@ from .adapters import parse
 from .history import roll
 from .model import context, number
 from .quota import refresh_kimi
+from .openai_quota import refresh_openai
 
 AGENTS = {"claude": "claude", "claude-code": "claude", "codex": "codex", "kimi": "kimi", "lumo": "lumo"}
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,160}\Z")
@@ -100,9 +101,9 @@ def read_log(store, key, agent, sid, path, now):
     inode = f"{info.st_dev}:{info.st_ino}"
     saved = store.db.execute("SELECT * FROM cursors WHERE path=?", (str(path),)).fetchone()
     state, offset = {}, 0
-    if saved and saved["inode"] == inode and saved["offset"] <= info.st_size and json.loads(saved["state"]).get("parser_version") == 2:
+    if saved and saved["inode"] == inode and saved["offset"] <= info.st_size and json.loads(saved["state"]).get("parser_version") == 3:
         state, offset = json.loads(saved["state"]), saved["offset"]
-    state["parser_version"] = 2
+    state["parser_version"] = 3
     initial_offset = offset
     malformed = 0
     with path.open("rb") as stream:
@@ -206,6 +207,7 @@ def collect(store, snapshot, config, now):
         observed = max((p["status"] for p in group), key=lambda s: priority.get(s, 0))
         store.status(key, now, observed, gap)
     refresh_kimi(store, config, now)
+    refresh_openai(store, config, now)
     with store.db:
         # Before pruning, so hours near the retention edge are folded while complete.
         roll(store, now, gap, config.get("pricing"), locate=lambda key: locate(store, key, config))

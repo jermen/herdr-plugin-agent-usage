@@ -66,7 +66,7 @@ modified. Startup and agent events ensure the watcher starts.
 
 | Agent | Tokens | Current context | Limits | Token cost |
 | --- | --- | --- | --- | --- |
-| Claude Code | Session JSONL, deduplicated request/message IDs | Last input; statusLine adds capacity/percentage | statusLine with reset times | Model, input/output, cache reads, 5m/1h writes |
+| Claude Code | Session JSONL, deduplicated request/message IDs | Last input; statusLine adds capacity/percentage | Native statusLine, or optional OpenAI subscription quota through Codex/CLIProxyAPI credentials | Served model, input/output, cache reads, 5m/1h writes |
 | Codex | Native cumulative token_count deltas | Last usage and context window | Native rate_limits and original timestamp | Model rates, cache, long-context pricing |
 | Kimi | Native wire.jsonl StatusUpdate | Tokens/capacity/ratio | Optional Coding /usages API | Configured model when absent from wire log |
 | Lumo Code | Session JSONL `assistant` usage, cached tokens when recorded | Last prompt + reply, or compaction's result; capacity from the pane | — | Unpriced: Lumo is a subscription |
@@ -123,10 +123,17 @@ Check `schema_version` and `generated_at`; consumers need not open SQLite.
   transcript_missing, transcript_ambiguous or transcript_error.
 - `sessions[]`: `key` (agent:session-id), `session_id`, `active`, `first_seen`,
   `last_seen`, `current`, and `periods`.
-- `current`: optional model, context, limits, limits_scope, native Claude
+- `current`: optional model, provider, context, limits, limits_scope,
+  limits_provider, limits_source, billing_mode, quota_status, native Claude
   session_estimated_cost_usd, and per-metric source timestamps in
-  `metric_observed_at`. Context is current only, never aggregated. Missing means
-  unavailable. Snapshot freshness does not imply that idle-session quota is fresh.
+  `metric_observed_at`. `provider` describes the served model, not the harness:
+  Claude Code can run OpenAI models over an Anthropic-compatible gateway.
+  Unknown model families remain unknown. `billing_mode: subscription` is set
+  by the explicitly configured subscription quota source, never inferred from
+  Claude's cost estimate. `quota_account` and `quota_config` are opaque hashes
+  for isolating account/configuration changes, not credentials or account IDs.
+  Context is current only, never aggregated. Missing means unavailable.
+  Snapshot freshness does not imply that idle-session quota is fresh.
 - `periods.today`: configured local midnight through now. `last_7_days` and
   `last_31_days`: rolling 7x24 and 31x24 hours. Each has explicit boundaries,
   tokens, usage_records_observed, estimated_spend, billed_spend, spend_coverage,
@@ -249,6 +256,56 @@ Kimi's wire status does not include a model ID. Set default_models.kimi only if
 that price applies to the collected sessions. This is labelled as an assumption;
 otherwise tokens work and costs remain unpriced. Custom prices are USD per
 million tokens. Only explicit aliases and dated model suffixes are normalized.
+
+## OpenAI models in Claude Code / CLIProxyAPI
+
+The terminal harness and model provider are independent. A `gpt-*`, `chatgpt-*`
+or `oN` model in a Claude transcript is OpenAI, not Anthropic. Token/context
+collection still uses Claude's native transcript and statusLine. The native
+`cost.total_cost_usd` is only the client's estimate; it does not establish the
+provider's billing mode or subscription limits.
+
+Claude may omit `rate_limits` when using a gateway. To read the actual OpenAI
+subscription allowance, explicitly select the **same account used by those
+sessions** in `~/.config/herdr/plugins/config/jermen.agent-usage/config.json`:
+
+```json
+{"openai_quota": {
+  "credentials_file": "~/.cli-proxy-api/codex-YOUR-ACCOUNT.json",
+  "agents": ["claude"],
+  "poll_seconds": 300
+}}
+```
+
+Both CLIProxyAPI's flat `type: codex` OAuth record and native Codex `auth.json`
+(`tokens.access_token` / `tokens.account_id`) are supported. To use the latter,
+set `credentials_file` to its actual path, typically `~/.codex/auth.json`.
+Only OpenAI-model sessions in the selected harnesses are queried; `agents`
+defaults to `["claude"]`. Native Codex normally already supplies its quota in
+logs, but can be explicitly added to this list. Do not assign one credential to
+sessions routed to different accounts or a proxy that rotates between accounts.
+No arbitrary aliases are guessed and no credentials are auto-discovered.
+
+The collector reads `https://chatgpt.com/backend-api/wham/usage` with that OAuth
+access token and account ID. It does not enable the proxy management API, change
+proxy configuration, send model prompts, use organization billing APIs, or
+refresh/rewrite credentials. OAuth refresh remains the client/proxy's job.
+API keys, disabled credentials and expired CLIProxyAPI credentials are refused.
+HTTP redirects are disabled and requests have bounded time/response size.
+
+One request per configured account source is shared by all matching sessions
+per endpoint, at most every five minutes (or a longer `poll_seconds`), including
+across collector restarts. Only normalized metrics and opaque source/account
+hashes are cached, never tokens, email, raw account IDs or raw provider responses.
+Empty Claude quota updates do not erase these limits. Provider/account switches
+invalidate incompatible current limits; fetch failures retain the last good
+sample with its original timestamp and expose `quota_status`.
+
+Window durations come from OpenAI, not an assumed plan: some plans report only
+a weekly primary window. Then the sidebar correctly shows `h -- / w N %`, not a
+fabricated five-hour allowance or zero. Code-review and unrelated model windows
+are not substituted for the account's allowance. Missing quota is unknown, not
+evidence of per-token billing. Restart the collector after changing this config.
 
 ## Optional Kimi quota
 

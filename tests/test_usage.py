@@ -261,7 +261,9 @@ class StoreTests(unittest.TestCase):
             after = collect(self.store, {"panes": [pane]}, config, NOW)
             self.assertEqual(after["panes"][0]["collection_status"], "ok")
             session = after["sessions"][0]
-            self.assertEqual(session["current"]["limits"], [])
+            # This minimal statusLine has no model or quota report; missing and
+            # empty limits both mean unavailable, not a zero allowance.
+            self.assertEqual(session["current"].get("limits", []), [])
             self.assertEqual(session["current"]["context"]["used_percent"], 14)
             for period in session["periods"].values():
                 self.assertEqual(period["usage_records_observed"], 1)

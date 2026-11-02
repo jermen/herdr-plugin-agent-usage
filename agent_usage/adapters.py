@@ -1,5 +1,6 @@
 """Read metrics from native logs without persisting conversation content."""
 from .model import context, counts, digest, limits, number, timestamp
+from .providers import model_provider
 
 
 def parse(agent, row, state):
@@ -73,7 +74,9 @@ def parse(agent, row, state):
         if last:
             patch["context"] = context(last.get("total_tokens"), info.get("model_context_window"))
         patch["model"] = state.get("model")
-        patch["provider"] = state.get("provider")
+        patch["provider"] = state.get("provider") or model_provider(patch["model"])
+        if "limits" in patch:
+            patch.update(limits_provider=patch["provider"], limits_source="native_codex")
     elif agent == "claude":
         msg = row.get("message") or {}
         if row.get("type") != "assistant" or not isinstance(msg, dict) or not msg.get("usage"):
@@ -89,10 +92,11 @@ def parse(agent, row, state):
         key = msg.get("id") or row.get("uuid")
         if not key:
             return None, {}
+        provider = model_provider(msg.get("model"))
         event = {"id": digest([row.get("requestId"), key]), "at": ts, "tokens": tok,
                  "details": {"service_tier": u.get("service_tier"), "speed": u.get("speed"),
-                             "inference_geo": u.get("inference_geo"), "provider": "anthropic"}}
-        patch = {"model": msg.get("model"), "context": context(
+                             "inference_geo": u.get("inference_geo"), "provider": provider}}
+        patch = {"model": msg.get("model"), "provider": provider, "context": context(
             tok["input"] + tok["cache_read"] + tok["cache_write"])}
     elif agent == "kimi":
         msg = row.get("message") or {}
@@ -127,7 +131,16 @@ def claude_statusline(row, now):
     used = sum(number(u.get(k)) or 0 for k in
                ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")) if u else None
     model = row.get("model") or {}
-    return {"model": model.get("id"), "observed_at": now,
-            "context": context(used, c.get("context_window_size"), c.get("used_percentage")),
-            "limits": limits(row.get("rate_limits")), "limits_scope": "account",
-            "session_estimated_cost_usd": number((row.get("cost") or {}).get("total_cost_usd"))}
+    patch = {"model": model.get("id"), "observed_at": now,
+             "context": context(used, c.get("context_window_size"), c.get("used_percentage")),
+             "session_estimated_cost_usd": number((row.get("cost") or {}).get("total_cost_usd"))}
+    provider = model_provider(model.get("id"))
+    if model.get("id"):
+        patch["provider"] = provider
+    windows = limits(row.get("rate_limits"))
+    # Claude's statusLine often has no rate_limits when using another provider.
+    # That is not a fresh empty quota report: retain separately collected limits.
+    if windows or provider == "anthropic":
+        patch.update(limits=windows, limits_scope="account", limits_provider=provider,
+                     limits_source="claude_statusline")
+    return patch
