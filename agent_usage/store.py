@@ -61,6 +61,8 @@ class Store:
                 source TEXT, PRIMARY KEY(session,event_id));
             CREATE TABLE IF NOT EXISTS billing (
                 provider TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS quota_cache (
+                source TEXT PRIMARY KEY, value TEXT);
         ''')
         if "details" not in {r[1] for r in self.db.execute("PRAGMA table_info(usage)")}:
             self.db.execute("ALTER TABLE usage ADD COLUMN details TEXT NOT NULL DEFAULT '{}'")
@@ -87,6 +89,26 @@ class Store:
         at = patch.get("observed_at", 0)
         # Track timestamps per metric; a newer quota report must not erase context.
         times = old.setdefault("metric_observed_at", {})
+        quota_fields = ("limits", "limits_scope", "limits_provider", "limits_source", "plan_type")
+        changed_provider = ("provider" in patch and patch["provider"] != old.get("provider")
+                            and at >= times.get("provider", 0))
+        changed_account = (old.get("limits_source") == patch.get("quota_source")
+                           and any(field in patch and patch[field] != old.get(field)
+                                   and at >= times.get(field, 0)
+                                   for field in ("quota_account", "quota_config")))
+        if changed_provider or changed_account:
+            # A model/provider or explicitly configured account switch must not
+            # carry the previous account's limits or billing assumptions along.
+            reset = quota_fields
+            if changed_provider:
+                reset += ("billing_mode", "quota_status", "quota_attempted_at", "quota_source",
+                          "quota_account", "quota_config")
+            for field in reset:
+                old.pop(field, None)
+                times.pop(field, None)
+        provider = patch.get("provider") if changed_provider else old.get("provider")
+        if patch.get("limits_provider") not in (None, provider) and provider is not None:
+            patch = {k: v for k, v in patch.items() if k not in quota_fields}
         for field, value in patch.items():
             if field == "observed_at":
                 continue
